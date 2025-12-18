@@ -90,7 +90,7 @@ with table_file as (
 select twb.exec_id , twb.twb_file_name from twb_file twb
 where twb.exec_id = :exec_id_input
 ), 
-
+ 
 dump_table as (
 select dd.twb_file_name , dd.table_name , dd.object_type , dd.property_value from RAW_DATA_DUMP dd
 where dd.exec_id= :exec_id_input

@@ -15,39 +15,11 @@ class Datasource():
             data_dict = []
 
             for datasource in soup.find('datasources').find_all('datasource'):          
-                #created ds_name as parameters don't have the caption attribute
-                #log the datasource soup object and see the structure
-                ds_name = datasource.get("caption") or datasource.get("name")
-                get_logger().info(f'Processing datasource properties for {ds_name} datasource')
                 
                 
-                
-                ds_type_twb='Live'
-                conversion ='Thoughtspot table'
-                connection =datasource.find('connection')
-                connection_class = connection.get('class') if connection else ''
-                is_sqlproxy = connection_class == 'sqlproxy'
-                
-                
+                get_logger().info(f'Processing datasource properties for {datasource["caption"]} datasource')                 
                 # ds_Type
-                
-                #added new class PublishedDatasource inaddition to Live and Extract
-                if(is_sqlproxy):
-                    ds_type_twb='Published Datasource'
-                    ds_type='Live'
-                    data_dict.append({
-                        'object type': 'datasource property',
-                        'datasource name': ds_name,
-                        'property type': 'ds_type',
-                        'property name': 'connection',
-                        'property value': ds_type_twb,
-                        'proposed value': ds_type,
-                        'conversion in TS': conversion,
-                        'supported in TS': 'Full',
-                        'supported in Migrator': 'Full'
-                    })
-                    
-                elif (datasource.find('extract')):
+                if (datasource.find('extract')):
                     
                     ds_type_twb = 'Extract'
                     if live_flag == True:
@@ -58,7 +30,7 @@ class Datasource():
                         ds_type = ds_type_twb
                     data_dict.append({
                         'object type': 'datasource property',
-                        'datasource name': ds_name,
+                        'datasource name': datasource['caption'],
                         'property type': 'ds_type',
                         'property name': 'connection',
                         'property value': ds_type_twb,
@@ -72,7 +44,7 @@ class Datasource():
                     conversion = 'Thoughtspot table'
                     data_dict.append({
                         'object type': 'datasource property',
-                        'datasource name': ds_name,
+                        'datasource name': datasource['caption'],
                         'property type': 'ds_type',
                         'property name': 'connection',
                         'property value': ds_type,
@@ -87,7 +59,7 @@ class Datasource():
                         connection = connection.find('connection').get('class')
                         data_dict.append({
                             'object type': 'datasource property',
-                            'datasource name': ds_name,
+                            'datasource name': datasource['caption'],
                             'property type': 'named_connection',
                             'property name': 'connector',
                             'property value': connection
@@ -95,19 +67,18 @@ class Datasource():
 
                 # datasource property (Joins and filters)
                 relations = datasource.find('_.fcp.ObjectModelEncapsulateLegacy.false...relation')
-                if(relations):
-                    relation_join = relations.get('join')
-                    for clause in relations.find_all('clause'):
-                        join_tbls = [exp.get('op') for exp in clause.find_all('expression') if exp.get('op') != '=']
-                        data_dict.append(
-                            {
-                                'object type': 'datasource property',
-                                'datasource name': ds_name,
-                                'property type': 'join',
-                                'property name': relation_join,
-                                'property value': "::".join(join_tbls)
-                            })      
-                        relation_join = relations.find('relation').get('join')
+                relation_join = relations.get('join')
+                for clause in relations.find_all('clause'):
+                    join_tbls = [exp.get('op') for exp in clause.find_all('expression') if exp.get('op') != '=']
+                    data_dict.append(
+                        {
+                            'object type': 'datasource property',
+                            'datasource name': datasource['caption'],
+                            'property type': 'join',
+                            'property name': relation_join,
+                            'property value': "::".join(join_tbls)
+                        })      
+                    relation_join = relations.find('relation').get('join')
                 
             df_datasource = pd.DataFrame.from_dict(data_dict)
         

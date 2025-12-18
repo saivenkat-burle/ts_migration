@@ -76,3 +76,6 @@
 **/__pycache__
 *.ipynb
 **/twbs
+venv/
+.DS_Store
+__pycache__/

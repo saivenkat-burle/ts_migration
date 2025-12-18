@@ -18,8 +18,6 @@ class Migrator:
     def __init__(self):
         self.datatype_map = file_reader.get_mapping_file()["datatype.csv"]
 
-
-
     def migrate(self, parsed_dump, output_folder):
         # Collecting all TWB file names
         twb_file_names = parsed_dump["twb file name"].unique().tolist()
@@ -60,15 +58,6 @@ class Migrator:
                         sliced_df_with_ds_name["property type"] == "ds_type"
                     ]["property value"].tolist()[0]
 
-                    is_published_datasource = datasource_type == "Published Datasource"
-
-                    #Added for Converting published datasources to Live 
-                    
-                    if is_published_datasource:
-                        get_logger().info(
-                            f"Datasource '{datasource}' is a published datasource; treating as Live for TML generation"
-                        )
-                        datasource_type = "Live"
 
                     for cdw_type in sliced_df_with_ds_name[
                         sliced_df_with_ds_name["property type"] == "named_connection"
@@ -84,22 +73,6 @@ class Migrator:
                         | (sliced_df_with_ds_name["object type"] == "custom sql query")
                     ]["table name"].tolist()
 
-                    #added fallback code  for sqlproxies to get table name  from columns 
-                    if not table_names:
-                        column_table_names = (
-                            sliced_df_with_ds_name[
-                                (sliced_df_with_ds_name["object type"] == "column")
-                                & (
-                                    sliced_df_with_ds_name["property type"]
-                                    == "metadata-record"
-                                )
-                            ]["table name"]
-                            .dropna()
-                            .unique()
-                            .tolist()
-                        )
-                        table_names = column_table_names
-
                     # Retrieve custom sql names alone
                     custom_sql_names = sliced_df_with_ds_name[
                         (sliced_df_with_ds_name["object type"] == "custom sql query")
@@ -114,18 +87,18 @@ class Migrator:
                     aggregation = []
                     custom_sql_queries = []
                     table_column_relationship_map = {}
-                    #added code to hanlde the table names for sqlproxies 
+
                     for t in table_names:
                         parts = t.split(".")
-                        formatted_full_name = t
-                        raw_table_token = parts[2] if len(parts) >= 3 else parts[0]
-                        table_name = raw_table_token.strip("[]")
+                        table_name = None
 
-                        if len(parts) < 3:
-                            formatted_full_name = raw_table_token.strip("[]")
+                        if len(parts) == 3:
+                            table_name = parts[2].strip("[]")  # Table name
+                        else:
+                            table_name = parts[0]  # Custom sql name
 
                         # Table name and Table full name into dictionary
-                        table_map[table_name] = formatted_full_name
+                        table_map[table_name] = t
 
                         #  queries to form custom sql dataframe if the table is a custom sql
                         if t in custom_sql_names:
@@ -140,7 +113,7 @@ class Migrator:
 
                         column_details_df = sliced_df_with_ds_name[
                             (sliced_df_with_ds_name["object type"] == "column")
-                            & (sliced_df_with_ds_name["table name"] == raw_table_token)
+                            & (sliced_df_with_ds_name["table name"] == table_name)
                             & (
                                 sliced_df_with_ds_name["property type"]
                                 == "metadata-record"
@@ -148,7 +121,7 @@ class Migrator:
                         ]
                         for _, row in column_details_df.iterrows():
                             table.append(table_name)
-                            table_full_name.append(table_map[table_name])
+                            table_full_name.append(t)
                             remote_columns.append(row["remote column name"])
                             local_columns.append(row["local column name"])
 
@@ -322,69 +295,20 @@ class Migrator:
                             custom_sql_df,
                             table_map,
                             output_path,
-                            # "dgprojectTS",
-                            "",
-                            file_name_prefix="sqlproxy_" if is_published_datasource else "",
+                            "dgprojectTS",
                         )
-                        #utility inner function to add table rows for sqlproxy/published datasources that only had column metadata rows
-                        def _append_missing_table_rows(table_dict_input):
-
-                            if sliced_df_with_ds_name.empty:
-                                return
-                            sample_row = sliced_df_with_ds_name.iloc[0]
-                            for table_key, output_name in table_dict_input.items():
-                                existing = parsed_dump[
-                                    (parsed_dump["object type"] == "table")
-                                    & (parsed_dump["datasource name"] == datasource)
-                                    & (
-                                        parsed_dump["table name"]
-                                        .fillna("")
-                                        .apply(lambda x: x.split(".")[-1].strip("[]"))
-                                        == table_key
-                                    )
-                                ]
-                                if not existing.empty:
-                                    continue
-                                # Build a new row using the existing schema
-                                new_row = {col: sample_row.get(col, None) for col in parsed_dump.columns}
-                                new_row["object type"] = "table"
-                                new_row["datasource name"] = datasource
-                                new_row["table name"] = table_key
-                                new_row["property type"] = ""
-                                new_row["property name"] = ""
-                                new_row["property value"] = ""
-                                new_row["conversion in TS"] = "Thoughtspot table"
-                                new_row["supported in TS"] = "Full"
-                                new_row["supported in Migrator"] = "Full"
-                                new_row["output_file_type"] = "Table TML"
-                                new_row["output_file_name"] = output_name
-                                parsed_dump.loc[len(parsed_dump)] = new_row
-
-                        _append_missing_table_rows(table_dict)
-
                         output_file = os.path.join(output_folder, "combined_output.csv")
-                        def _set_table_output(table_key, output_name):
-                            # Prefer rows with matching datasource + table name; fall back to any metadata row for that table.
-                            base_mask = parsed_dump["datasource name"] == datasource
-                            name_mask = (
-                                parsed_dump["table name"]
-                                .fillna("")
-                                .apply(lambda x: x.split(".")[-1].strip("[]"))
-                                == table_key
-                            )
-                            idx = parsed_dump.index[base_mask & name_mask]
-                            if len(idx) == 0:
-                                # fallback: use first metadata row for this datasource
-                                idx = parsed_dump.index[
-                                    base_mask
-                                    & (parsed_dump["property type"].fillna("") == "metadata-record")
+                        table_mask = (parsed_dump["object type"] == "table") & (
+                            parsed_dump["conversion in TS"] == "Thoughtspot table"
+                        )
+                        parsed_dump.loc[table_mask, "output_file_type"] = "Table TML"
+                        for index, row in parsed_dump[table_mask].iterrows():
+                            table_name = row["table name"]
+                            extracted_table_name = table_name.split(".")[-1].strip("[]")
+                            if extracted_table_name in table_dict:
+                                parsed_dump.at[index, "output_file_name"] = table_dict[
+                                    extracted_table_name
                                 ]
-                            if len(idx) > 0:
-                                parsed_dump.at[idx[0], "output_file_type"] = "Table TML"
-                                parsed_dump.at[idx[0], "output_file_name"] = output_name
-
-                        for extracted_table_name, tml_name in table_dict.items():
-                            _set_table_output(extracted_table_name, tml_name)
 
                         view_mask = parsed_dump["object type"] == "custom sql query"
                         parsed_dump.loc[view_mask, "output_file_type"] = "SQL View TML"
@@ -400,57 +324,47 @@ class Migrator:
 
                         # parsed_dump.to_csv(output_file, mode='a', header=False, index=False)
 
-                        if is_published_datasource:
-                            get_logger().info(
-                                f"Published datasource '{datasource}'; generating model/worksheet TML as Live"
-                            )
-
                         filters = LiveDataFilter()
                         live_filters = filters.live_filter(
                             filters_df, table_column_relationship_map, datasource
                         )
-                        if is_published_datasource:
-                            get_logger().info(
-                                f"Skipping model/worksheet TML generation for published datasource '{datasource}' (guarded by SKIP_PUBLISHED_MODEL_TMLS)"
-                            )
-                        else:
-                            model_dump = self.create_model_tml(
-                                data_df,
-                                join_df,
-                                formula_details_df,
-                                datasource,
-                                output_path,
-                                split_tables,
-                                True,
-                                live_filters,
-                            )
-                            output_file = os.path.join(output_folder, "combined_output.csv")
-                            model_mask = (parsed_dump["property type"] == "ds_type") & (
-                                parsed_dump["datasource name"] == datasource
-                            )
-                            parsed_dump.loc[model_mask, "output_file_type"] = (
-                                "Worksheet TML"
-                            )
-                            for index, row in parsed_dump[model_mask].iterrows():
-                                datasource_name = row["datasource name"]
-                                matching_key = None
-                                for key in model_dump.keys():
-                                    if key.startswith(datasource_name):
-                                        matching_key = key
-                                        break
+                        model_dump = self.create_model_tml(
+                            data_df,
+                            join_df,
+                            formula_details_df,
+                            datasource,
+                            output_path,
+                            split_tables,
+                            True,
+                            live_filters,
+                        )
+                        output_file = os.path.join(output_folder, "combined_output.csv")
+                        model_mask = (parsed_dump["property type"] == "ds_type") & (
+                            parsed_dump["property value"] == "Live"
+                        )
+                        parsed_dump.loc[model_mask, "output_file_type"] = (
+                            "Worksheet TML"
+                        )
+                        for index, row in parsed_dump[model_mask].iterrows():
+                            datasource_name = row["datasource name"]
+                            matching_key = None
+                            for key in model_dump.keys():
+                                if key.startswith(datasource_name):
+                                    matching_key = key
+                                    break
 
-                                if matching_key:
-                                    parsed_dump.at[index, "output_file_name"] = model_dump[
-                                        matching_key
-                                    ]
-                                    print(
-                                        f"Updated row {index} with output_file_name: {model_dump[matching_key]}"
-                                    )
-                                else:
-                                    print(
-                                        f"Warning: '{datasource_name}' not found in model_dump"
-                                    )
-                            # parsed_dump.to_csv(output_file, mode='a', header=False, index=False)
+                            if matching_key:
+                                parsed_dump.at[index, "output_file_name"] = model_dump[
+                                    matching_key
+                                ]
+                                print(
+                                    f"Updated row {index} with output_file_name: {model_dump[matching_key]}"
+                                )
+                            else:
+                                print(
+                                    f"Warning: '{datasource_name}' not found in model_dump"
+                                )
+                        # parsed_dump.to_csv(output_file, mode='a', header=False, index=False)
 
                     elif datasource_type == "Extract":
                         get_logger().info(f"'{datasource}' is Extract")
